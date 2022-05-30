@@ -21,8 +21,8 @@ import org.json.JSONObject;
 import org.openmetadata.catalog.Entity;
 import org.openmetadata.catalog.entity.services.ingestionPipelines.AirflowConfig;
 import org.openmetadata.catalog.entity.services.ingestionPipelines.IngestionPipeline;
-import org.openmetadata.catalog.entity.services.ingestionPipelines.Source;
 import org.openmetadata.catalog.metadataIngestion.LogLevels;
+import org.openmetadata.catalog.metadataIngestion.SourceConfig;
 import org.openmetadata.catalog.resources.services.ingestionpipelines.IngestionPipelineResource;
 import org.openmetadata.catalog.services.connections.metadata.OpenMetadataServerConnection;
 import org.openmetadata.catalog.type.EntityReference;
@@ -140,24 +140,20 @@ public class IngestionPipelineRepository extends EntityRepository<IngestionPipel
 
     @Override
     public void entitySpecificUpdate() throws IOException {
-      updateSource(original.getSource(), updated.getSource());
+      updateSourceConfig(original.getSourceConfig(), updated.getSourceConfig());
       updateAirflowConfig(original.getAirflowConfig(), updated.getAirflowConfig());
       updateOpenMetadataServerConnection(
           original.getOpenMetadataServerConnection(), updated.getOpenMetadataServerConnection());
       updateLogLevel(original.getLoggerLevel(), updated.getLoggerLevel());
     }
 
-    private void updateSource(Source origSource, Source updatedSource) throws JsonProcessingException {
-      JSONObject origSourceConfig = new JSONObject(JsonUtils.pojoToJson(origSource.getSourceConfig().getConfig()));
-      JSONObject updatedSourceConfig =
-          new JSONObject(JsonUtils.pojoToJson(updatedSource.getSourceConfig().getConfig()));
-      JSONObject origSourceConnection = new JSONObject(JsonUtils.pojoToJson(origSource.getServiceConnection()));
-      JSONObject updatedSourceConnection = new JSONObject(JsonUtils.pojoToJson(updatedSource.getServiceConnection()));
+    private void updateSourceConfig(SourceConfig origSourceConfig, SourceConfig updatedSourceConfig)
+        throws JsonProcessingException {
+      JSONObject origJSON = new JSONObject(JsonUtils.pojoToJson(origSourceConfig.getConfig()));
+      JSONObject updatedJSON = new JSONObject(JsonUtils.pojoToJson(updatedSourceConfig.getConfig()));
 
-      if (!origSource.getServiceName().equals(updatedSource.getServiceName())
-          || !origSourceConfig.similar(updatedSourceConfig)
-          || !origSourceConnection.similar(updatedSourceConnection)) {
-        recordChange("source", origSource, updatedSource);
+      if (!origJSON.similar(updatedJSON)) {
+        recordChange("source", origSourceConfig, updatedSourceConfig);
       }
     }
 

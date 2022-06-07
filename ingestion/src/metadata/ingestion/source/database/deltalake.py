@@ -257,7 +257,7 @@ class DeltalakeSource(Source[Entity]):
         table_name = f"{schema}.{table}"
         try:
             raw_columns = self.spark.sql(f"describe {table_name}").collect()
-            for field in self.spark.table(f"{table_name}").schema:
+            for field in self.spark.table_request(f"{table_name}").schema:
                 field_dict[field.name] = field
         except (AnalysisException, ParseException) as e:
             logger.error(e)

@@ -109,11 +109,11 @@ class AthenaSource(CommonDbSourceService):
         return cls(config, metadata_config)
 
     def get_table_names(
-        self, schema: str, inspector: Inspector
+        self, schema_name: str, inspector: Inspector
     ) -> Optional[Iterable[Tuple[str, str]]]:
         if self.source_config.includeTables:
-            for table in inspector.get_table_names(schema):
+            for table in inspector.get_table_names(schema_name):
                 yield table, "External"  # All tables in Athena are External
         if self.source_config.includeViews:
-            for view in inspector.get_view_names(schema):
+            for view in inspector.get_view_names(schema_name):
                 yield view, "View"

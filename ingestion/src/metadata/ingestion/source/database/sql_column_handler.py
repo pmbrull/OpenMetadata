@@ -126,18 +126,18 @@ class SqlColumnHandler:
         return Column(**parsed_string)
 
     def get_columns(
-        self, schema: str, table: str, inspector: Inspector
+        self, schema_name: str, table_name: str, inspector: Inspector
     ) -> Optional[List[Column]]:
         """
         Get columns types and constraints information
         """
         # Get inspector information:
         pk_columns, unique_columns = self._get_columns_with_constraints(
-            schema, table, inspector
+            schema_name, table_name, inspector
         )
         table_columns = []
         columns = inspector.get_columns(
-            table, schema, db_name=self._get_database_name()
+            table_name, schema_name, db_name=self._get_database_name()
         )
         for column in columns:
             try:
@@ -146,7 +146,7 @@ class SqlColumnHandler:
                     data_type_display,
                     arr_data_type,
                     parsed_string,
-                ) = self._process_col_type(column, schema)
+                ) = self._process_col_type(column, schema_name)
                 if parsed_string is None:
                     col_type = ColumnTypeParser.get_column_type(column["type"])
                     col_constraint = self._get_column_constraints(

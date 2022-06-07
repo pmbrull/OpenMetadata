@@ -196,7 +196,7 @@ class BigquerySource(CommonDbSourceService):
             logger.debug(traceback.format_exc())
             logger.error(err)
 
-    def get_database_entity(self, database: Optional[str]) -> Database:
+    def get_database_request(self, database: Optional[str]) -> Database:
         if not database:
             database = (
                 self.connection_config.projectId
@@ -210,13 +210,13 @@ class BigquerySource(CommonDbSourceService):
         )
 
     def get_view_definition(
-        self, table_type: str, table_name: str, schema: str, inspector: Inspector
+        self, table_type: str, table_name: str, schema_name: str, inspector: Inspector
     ) -> Optional[str]:
         if table_type == "View":
             view_definition = ""
             try:
                 view_definition = inspector.get_view_definition(
-                    f"{self.service_connection.projectId}.{schema}.{table_name}"
+                    f"{self.service_connection.projectId}.{schema_name}.{table_name}"
                 )
                 view_definition = (
                     "" if view_definition is None else str(view_definition)

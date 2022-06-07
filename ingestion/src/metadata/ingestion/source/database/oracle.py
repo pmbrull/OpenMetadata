@@ -45,7 +45,7 @@ class OracleSource(CommonDbSourceService):
             )
         return cls(config, metadata_config)
 
-    def get_database_entity(self, database: Optional[str]) -> Database:
+    def get_database_request(self, database: Optional[str]) -> Database:
         if not database:
             database = self.service_connection.oracleServiceName
         return Database(

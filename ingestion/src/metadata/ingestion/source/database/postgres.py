@@ -55,9 +55,9 @@ class PostgresSource(CommonDbSourceService):
 
         return cls(config, metadata_config)
 
-    def get_databases(self) -> Iterable[Inspector]:
+    def get_database_request_and_inspector(self) -> Iterable[Inspector]:
         if self.service_connection.database:
-            yield from super().get_databases()
+            yield from super().get_database_request_and_inspector()
         else:
             query = "select datname from pg_catalog.pg_database;"
             results = self.connection.execute(query)
@@ -79,7 +79,7 @@ class PostgresSource(CommonDbSourceService):
                 except Exception as err:
                     logger.error(f"Failed to Connect: {row[0]} due to error {err}")
 
-    def get_database_entity(self, database: str) -> Database:
+    def get_database_request(self, database: str) -> Database:
         if database:
             self.service_connection.database = database
         return Database(
@@ -90,7 +90,7 @@ class PostgresSource(CommonDbSourceService):
     def get_status(self) -> SourceStatus:
         return self.status
 
-    def is_partition(self, table_name: str, schema: str, inspector) -> bool:
+    def is_partition(self, table_name: str, schema_name: str, inspector) -> bool:
         cur = self.pgconn.cursor()
         cur.execute(
             """
@@ -100,7 +100,7 @@ class PostgresSource(CommonDbSourceService):
                 WHERE  c.relname = %s
                   AND  n.nspname = %s
             """,
-            (table_name, schema),
+            (table_name, schema_name),
         )
         obj = cur.fetchone()
         is_partition = obj[0] if obj else False

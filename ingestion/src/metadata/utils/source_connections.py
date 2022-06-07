@@ -98,7 +98,7 @@ def get_connection_url_common(connection):
 
     url += connection.hostPort
     if hasattr(connection, "database"):
-        url += f"/{connection.database}" if connection.database else ""
+        url += f"/{connection.database_request}" if connection.database_request else ""
 
     options = (
         connection.connectionOptions.dict()
@@ -106,7 +106,7 @@ def get_connection_url_common(connection):
         else connection.connectionOptions
     )
     if options:
-        if not connection.database:
+        if not connection.database_request:
             url += "/"
         params = "&".join(
             f"{key}={quote_plus(value)}" for (key, value) in options.items() if value

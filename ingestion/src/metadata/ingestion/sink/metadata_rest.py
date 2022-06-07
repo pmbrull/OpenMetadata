@@ -11,6 +11,7 @@
 
 import logging
 import traceback
+from functools import singledispatch
 from typing import TypeVar
 
 from pydantic import BaseModel, ValidationError
@@ -81,12 +82,23 @@ om_chart_type_dict = {
 }
 
 
-class MetadataRestSinkConfig(ConfigModel):
-    api_endpoint: str = None
+@singledispatch
+def write_record(record) -> None:
+    raise NotImplementedError(f"Missing function registration to sink {type(record)}")
+
+
+@write_record.register
+def _(record: OMetaDatabaseAndTable, metadata: OpenMetadata) -> None:
+    """
+    Sink Table, Database and Schema to OM
+    :param record: OMetaDatabaseAndTable
+    """
+    database_entity = metadata.create_or_update(record.database_request)
+
 
 
 class MetadataRestSink(Sink[Entity]):
-    config: MetadataRestSinkConfig
+    config: ConfigModel
     status: SinkStatus
 
     # We want to catch any errors that might happen during the sink
@@ -94,7 +106,7 @@ class MetadataRestSink(Sink[Entity]):
 
     def __init__(
         self,
-        config: MetadataRestSinkConfig,
+        config: ConfigModel,
         metadata_config: OpenMetadataConnection,
     ):
 
@@ -109,7 +121,7 @@ class MetadataRestSink(Sink[Entity]):
 
     @classmethod
     def create(cls, config_dict: dict, metadata_config: OpenMetadataConnection):
-        config = MetadataRestSinkConfig.parse_obj(config_dict)
+        config = ConfigModel.parse_obj(config_dict)
         return cls(config, metadata_config)
 
     def write_record(self, record: Entity) -> None:
@@ -151,10 +163,10 @@ class MetadataRestSink(Sink[Entity]):
     def write_tables(self, db_schema_and_table: OMetaDatabaseAndTable):
         try:
             db_request = CreateDatabaseRequest(
-                name=db_schema_and_table.database.name,
-                description=db_schema_and_table.database.description,
+                name=db_schema_and_table.database_request.name,
+                description=db_schema_and_table.database_request.description,
                 service=EntityReference(
-                    id=db_schema_and_table.database.service.id,
+                    id=db_schema_and_table.database_request.service.id,
                     type="databaseService",
                 ),
             )
@@ -163,8 +175,8 @@ class MetadataRestSink(Sink[Entity]):
                 id=db.id.__root__, name=db.name.__root__, type="database"
             )
             db_schema_request = CreateDatabaseSchemaRequest(
-                name=db_schema_and_table.database_schema.name,
-                description=db_schema_and_table.database_schema.description,
+                name=db_schema_and_table.schema_request.name,
+                description=db_schema_and_table.schema_request.description,
                 database=db_ref,
             )
             db_schema = self.metadata.create_or_update(db_schema_request)
@@ -173,23 +185,23 @@ class MetadataRestSink(Sink[Entity]):
                 name=db_schema.name.__root__,
                 type="databaseSchema",
             )
-            if db_schema_and_table.table.description is not None:
-                db_schema_and_table.table.description = (
-                    db_schema_and_table.table.description.__root__.strip()
+            if db_schema_and_table.table_request.description is not None:
+                db_schema_and_table.table_request.description = (
+                    db_schema_and_table.table_request.description.__root__.strip()
                 )
 
             table_request = CreateTableRequest(
-                name=db_schema_and_table.table.name.__root__,
-                tableType=db_schema_and_table.table.tableType,
-                columns=db_schema_and_table.table.columns,
-                description=db_schema_and_table.table.description,
+                name=db_schema_and_table.table_request.name.__root__,
+                tableType=db_schema_and_table.table_request.tableType,
+                columns=db_schema_and_table.table_request.columns,
+                description=db_schema_and_table.table_request.description,
                 databaseSchema=db_schema_ref,
-                tableConstraints=db_schema_and_table.table.tableConstraints,
-                tags=db_schema_and_table.table.tags,
+                tableConstraints=db_schema_and_table.table_request.tableConstraints,
+                tags=db_schema_and_table.table_request.tags,
             )
-            if db_schema_and_table.table.viewDefinition:
+            if db_schema_and_table.table_request.viewDefinition:
                 table_request.viewDefinition = (
-                    db_schema_and_table.table.viewDefinition.__root__
+                    db_schema_and_table.table_request.viewDefinition.__root__
                 )
 
             created_table = self.metadata.create_or_update(table_request)
@@ -210,63 +222,63 @@ class MetadataRestSink(Sink[Entity]):
                 )
                 location = self.metadata.create_or_update(location_request)
                 self.metadata.add_location(table=created_table, location=location)
-            if db_schema_and_table.table.sampleData is not None:
+            if db_schema_and_table.table_request.sampleData is not None:
                 try:
                     self.metadata.ingest_table_sample_data(
                         table=created_table,
-                        sample_data=db_schema_and_table.table.sampleData,
+                        sample_data=db_schema_and_table.table_request.sampleData,
                     )
                 except Exception as e:
                     logging.error(
-                        f"Failed to ingest sample data for table {db_schema_and_table.table.name}"
+                        f"Failed to ingest sample data for table {db_schema_and_table.table_request.name}"
                     )
 
-            if db_schema_and_table.table.tableProfile is not None:
+            if db_schema_and_table.table_request.tableProfile is not None:
                 self.metadata.ingest_table_profile_data(
                     table=created_table,
-                    table_profile=db_schema_and_table.table.tableProfile,
+                    table_profile=db_schema_and_table.table_request.tableProfile,
                 )
 
-            if db_schema_and_table.table.dataModel is not None:
+            if db_schema_and_table.table_request.dataModel is not None:
                 self.metadata.ingest_table_data_model(
-                    table=created_table, data_model=db_schema_and_table.table.dataModel
+                    table=created_table, data_model=db_schema_and_table.table_request.dataModel
                 )
 
-            if db_schema_and_table.table.tableQueries is not None:
+            if db_schema_and_table.table_request.tableQueries is not None:
                 self.metadata.ingest_table_queries_data(
                     table=created_table,
-                    table_queries=db_schema_and_table.table.tableQueries,
+                    table_queries=db_schema_and_table.table_request.tableQueries,
                 )
 
-            if db_schema_and_table.table.viewDefinition is not None:
+            if db_schema_and_table.table_request.viewDefinition is not None:
                 lineage_status = ingest_lineage_by_query(
                     self.metadata,
-                    query=db_schema_and_table.table.viewDefinition.__root__,
+                    query=db_schema_and_table.table_request.viewDefinition.__root__,
                     service_name=db.service.name,
-                    database=db_schema_and_table.database.name.__root__,
+                    database=db_schema_and_table.database_request.name.__root__,
                 )
                 if not lineage_status:
                     self.create_lineage_via_es(db_schema_and_table, db_schema, db)
 
             logger.info(
                 "Successfully ingested table {}.{}".format(
-                    db_schema_and_table.database.name.__root__,
+                    db_schema_and_table.database_request.name.__root__,
                     created_table.name.__root__,
                 )
             )
             self.status.records_written(
-                f"Table: {db_schema_and_table.database.name.__root__}.{created_table.name.__root__}"
+                f"Table: {db_schema_and_table.database_request.name.__root__}.{created_table.name.__root__}"
             )
         except (APIError, ValidationError) as err:
             logger.error(
                 "Failed to ingest table {} in database {}".format(
-                    db_schema_and_table.table.name.__root__,
-                    db_schema_and_table.database.name.__root__,
+                    db_schema_and_table.table_request.name.__root__,
+                    db_schema_and_table.database_request.name.__root__,
                 )
             )
             logger.debug(traceback.format_exc())
             logger.error(err)
-            self.status.failure(f"Table: {db_schema_and_table.table.name.__root__}")
+            self.status.failure(f"Table: {db_schema_and_table.table_request.name.__root__}")
 
     def write_topics(self, topic: Topic) -> None:
         try:
@@ -596,8 +608,8 @@ class MetadataRestSink(Sink[Entity]):
 
     def create_lineage_via_es(self, db_schema_and_table, db_schema, db):
         try:
-            parser = Parser(db_schema_and_table.table.viewDefinition.__root__)
-            to_table_name = db_schema_and_table.table.name.__root__
+            parser = Parser(db_schema_and_table.table_request.viewDefinition.__root__)
+            to_table_name = db_schema_and_table.table_request.name.__root__
 
             for from_table_name in parser.tables:
                 if "." not in from_table_name:
@@ -607,11 +619,11 @@ class MetadataRestSink(Sink[Entity]):
                     from_table_name,
                     f"{db_schema.name.__root__}.{to_table_name}",
                     db.service.name,
-                    db_schema_and_table.database.name.__root__,
+                    db_schema_and_table.database_request.name.__root__,
                 )
         except Exception as e:
             logger.error("Failed to create view lineage")
-            logger.debug(f"Query : {db_schema_and_table.table.viewDefinition.__root__}")
+            logger.debug(f"Query : {db_schema_and_table.table_request.viewDefinition.__root__}")
             logger.debug(traceback.format_exc())
 
     def write_pipeline_status(self, record: OMetaPipelineStatus) -> None:

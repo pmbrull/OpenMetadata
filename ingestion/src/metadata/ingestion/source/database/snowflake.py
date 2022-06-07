@@ -61,9 +61,9 @@ class SnowflakeSource(CommonDbSourceService):
     def __init__(self, config, metadata_config):
         super().__init__(config, metadata_config)
 
-    def get_databases(self) -> Iterable[Inspector]:
+    def get_database_request_and_inspector(self) -> Iterable[Inspector]:
         if self.config.serviceConnection.__root__.config.database:
-            yield from super().get_databases()
+            yield from super().get_database_request_and_inspector()
         else:
             query = "SHOW DATABASES"
             results = self.connection.execute(query)
@@ -141,7 +141,7 @@ class SnowflakeSource(CommonDbSourceService):
         return cls(config, metadata_config)
 
     def next_record(self) -> Iterable[Entity]:
-        for inspector in self.get_databases():
+        for inspector in self.get_database_request_and_inspector():
             for schema in inspector.get_schema_names():
                 try:
                     if filter_by_schema(
@@ -155,7 +155,7 @@ class SnowflakeSource(CommonDbSourceService):
                     self.connection.execute(
                         f"USE {self.service_connection.database}.{schema}"
                     )
-                    yield from self.fetch_tables(inspector=inspector, schema=schema)
+                    yield from self.fetch_tables(inspector=inspector, schema_name=schema)
                     if self.source_config.markDeletedTables:
                         schema_fqn = f"{self.config.serviceName}.{self.service_connection.database}.{schema}"
                         yield from self.delete_tables(schema_fqn)
@@ -185,23 +185,23 @@ class SnowflakeSource(CommonDbSourceService):
     def fetch_tables(
         self,
         inspector: Inspector,
-        schema: str,
+        schema_name: str,
     ) -> Iterable[Union[OMetaDatabaseAndTable, OMetaTagAndCategory]]:
-        entities = inspector.get_table_names(schema)
+        entities = inspector.get_table_names(schema_name)
         for table_name, entity_type, comment in entities:
             try:
                 if filter_by_table(
                     self.source_config.tableFilterPattern, table_name=table_name
                 ):
                     self.status.filter(
-                        f"{self.config.serviceName}.{self.service_connection.database}.{schema}.{table_name}",
+                        f"{self.config.serviceName}.{self.service_connection.database}.{schema_name}.{table_name}",
                         "{} pattern not allowed".format(entity_type),
                     )
                     continue
                 if entity_type == "VIEW" and not self.source_config.includeViews:
                     continue
-                table_columns = self.get_columns(schema, table_name, inspector)
-                view_definition = inspector.get_view_definition(table_name, schema)
+                table_columns = self.get_columns(schema_name, table_name, inspector)
+                view_definition = inspector.get_view_definition(table_name, schema_name)
                 view_definition = (
                     "" if view_definition is None else str(view_definition)
                 )
@@ -217,19 +217,19 @@ class SnowflakeSource(CommonDbSourceService):
                     viewDefinition=view_definition,
                 )
                 yield from self.add_tags_to_table(
-                    schema=schema, table_name=table_name, table_entity=table_entity
+                    schema=schema_name, table_name=table_name, table_entity=table_entity
                 )
                 if self.source_config.generateSampleData:
-                    table_data = self.fetch_sample_data(schema, table_name)
+                    table_data = self.fetch_sample_data(schema_name, table_name)
                     table_entity.sampleData = table_data
                 if self.source_config.enableDataProfiler:
-                    profile = self.run_profiler(table=table_entity, schema=schema)
+                    profile = self.run_profiler(table=table_entity, schema=schema_name)
                     table_entity.tableProfile = [profile] if profile else None
-                database = self.get_database_entity(self.service_connection.database)
+                database = self.get_database_request(self.service_connection.database)
                 table_schema_and_db = OMetaDatabaseAndTable(
                     table=table_entity,
                     database=database,
-                    database_schema=self.get_schema_entity(schema, database),
+                    database_schema=self.get_schema_request(schema_name, database),
                 )
                 self.register_record(table_schema_and_db)
                 yield table_schema_and_db

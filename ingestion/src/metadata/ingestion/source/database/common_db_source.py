@@ -12,23 +12,21 @@
 Generic source to build SQL connectors.
 """
 
-import traceback
-from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Iterable, List, Optional, Tuple
+from typing import Iterable, Optional, Tuple
 
+from ingestion.build.lib.metadata.generated.schema.type.entityReference import EntityReference
+from metadata.generated.schema.api.data.createDatabase import CreateDatabaseRequest
 from sqlalchemy.engine import Connection
 from sqlalchemy.engine.base import Engine
 from sqlalchemy.engine.reflection import Inspector
 from sqlalchemy.inspection import inspect
 from sqlalchemy.orm import Session
 
-from metadata.generated.schema.entity.data.table import TableData
 from metadata.generated.schema.entity.services.connections.metadata.openMetadataConnection import (
     OpenMetadataConnection,
 )
 from metadata.generated.schema.entity.services.databaseService import DatabaseService
-from metadata.generated.schema.entity.tags.tagCategory import Tag
 from metadata.generated.schema.metadataIngestion.databaseServiceMetadataPipeline import (
     DatabaseServiceMetadataPipeline,
 )
@@ -39,7 +37,7 @@ from metadata.ingestion.api.source import SourceStatus
 from metadata.ingestion.ometa.ometa_api import OpenMetadata
 from metadata.ingestion.source.database.dbt_source import DBTSource
 from metadata.ingestion.source.database.sql_column_handler import SqlColumnHandler
-from metadata.ingestion.source.database.sqlalchemy_source import SqlAlchemySource
+from metadata.ingestion.source.database.sqlalchemy_source import SqlAlchemySource, SQLSourceStatus
 from metadata.utils.connections import (
     create_and_bind_session,
     get_connection,
@@ -48,26 +46,6 @@ from metadata.utils.connections import (
 from metadata.utils.logger import ingestion_logger
 
 logger = ingestion_logger()
-
-
-@dataclass
-class SQLSourceStatus(SourceStatus):
-    """
-    Reports the source status after ingestion
-    """
-
-    success: List[str] = field(default_factory=list)
-    failures: List[str] = field(default_factory=list)
-    warnings: List[str] = field(default_factory=list)
-    filtered: List[str] = field(default_factory=list)
-
-    def scanned(self, record: str) -> None:
-        self.success.append(record)
-        logger.info(f"Table Scanned: {record}")
-
-    def filter(self, record: str, err: str) -> None:
-        self.filtered.append(record)
-        logger.warning(f"Filtered Table {record} due to {err}")
 
 
 class CommonDbSourceService(DBTSource, SqlColumnHandler, SqlAlchemySource):
@@ -98,6 +76,7 @@ class CommonDbSourceService(DBTSource, SqlColumnHandler, SqlAlchemySource):
         self.data_profiler = None
         self.data_models = {}
         self.table_constraints = None
+        self.inspector = None
         self.database_source_state = set()
         self.profile_date = datetime.now()
         super().__init__()
@@ -114,37 +93,37 @@ class CommonDbSourceService(DBTSource, SqlColumnHandler, SqlAlchemySource):
     ) -> Tuple[str, str]:
         return schema, table
 
-    def fetch_sample_data(self, schema: str, table: str) -> Optional[TableData]:
-        """
-        Get some sample data from the source to be added
-        to the Table Entities
-        """
-        try:
-            query = self.source_config.sampleDataQuery.format(schema, table)
-            logger.info(query)
-            results = self.connection.execute(query)
-            cols = [col for col in results.keys()]
-            rows = [list(res) for res in results]
-            return TableData(columns=cols, rows=rows)
-        # Catch any errors and continue the ingestion
-        except Exception as err:  # pylint: disable=broad-except
-            logger.debug(traceback.format_exc())
-            logger.error(f"Failed to generate sample data for {table} - {err}")
-        return None
+    def _get_database_name(self) -> str:
+        if hasattr(self.service_connection, "database"):
+            return self.service_connection.database_request or "default"
+        return "default"
 
-    def get_databases(self) -> Iterable[Inspector]:
-        yield inspect(self.engine)
+    def get_database_request_and_inspector(self) -> Iterable[Tuple[CreateDatabaseRequest, Inspector]]:
+        """
+        Default implementation for sources that do not have
+        the concept of database.
+        :return: Inspector and "default" db
+        """
+        inspector = inspect(self.engine)
+        database_request = CreateDatabaseRequest(
+            name=self._get_database_name(),
+            service=EntityReference(
+                id=self.service.id, type=self.service_connection.type.value
+            ),
+        )
+
+        yield database_request, inspector
 
     def get_schemas(self, inspector: Inspector) -> str:
         for schema in inspector.get_schema_names():
             yield schema
 
     def get_table_description(
-        self, schema: str, table_name: str, inspector: Inspector
+        self, schema_name: str, table_name: str, inspector: Inspector
     ) -> str:
         description = None
         try:
-            table_info: dict = inspector.get_table_comment(table_name, schema)
+            table_info: dict = inspector.get_table_comment(table_name, schema_name)
         # Catch any exception without breaking the ingestion
         except Exception as err:  # pylint: disable=broad-except
             logger.warning(f"Table Description Error : {str(err)}")
@@ -152,27 +131,27 @@ class CommonDbSourceService(DBTSource, SqlColumnHandler, SqlAlchemySource):
             description = table_info["text"]
         return description
 
-    def is_partition(self, table_name: str, schema: str, inspector: Inspector) -> bool:
+    def is_partition(self, table_name: str, schema_name: str, inspector: Inspector) -> bool:
         self.inspector = inspector
         return False
 
     def get_table_names(
-        self, schema: str, inspector: Inspector
+        self, schema_name: str, inspector: Inspector
     ) -> Optional[Iterable[Tuple[str, str]]]:
         if self.source_config.includeTables:
-            for table in inspector.get_table_names(schema):
+            for table in inspector.get_table_names(schema_name):
                 yield table, "Regular"
         if self.source_config.includeViews:
-            for view in inspector.get_view_names(schema):
+            for view in inspector.get_view_names(schema_name):
                 yield view, "View"
 
     def get_view_definition(
-        self, table_type: str, table_name: str, schema: str, inspector: Inspector
+        self, table_type: str, table_name: str, schema_name: str, inspector: Inspector
     ) -> Optional[str]:
 
         if table_type == "View":
             try:
-                view_definition = inspector.get_view_definition(table_name, schema)
+                view_definition = inspector.get_view_definition(table_name, schema_name)
                 view_definition = (
                     "" if view_definition is None else str(view_definition)
                 )
@@ -216,7 +195,7 @@ class CommonDbSourceService(DBTSource, SqlColumnHandler, SqlAlchemySource):
         return self.status
 
     def fetch_table_tags(
-        self, table_name: str, schema: str, inspector: Inspector
+        self, table_name: str, schema_name: str, inspector: Inspector
     ) -> None:
         """
         Method to fetch tags associated with table

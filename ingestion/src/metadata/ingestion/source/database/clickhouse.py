@@ -180,9 +180,9 @@ class ClickhouseSource(CommonDbSourceService):
 
         return cls(config, metadata_config)
 
-    def get_databases(self) -> Iterable[Inspector]:
+    def get_database_request_and_inspector(self) -> Iterable[Inspector]:
         if self.service_connection.database:
-            yield from super().get_databases()
+            yield from super().get_database_request_and_inspector()
         else:
             query = "show databases"
             results = self.connection.execute(query)

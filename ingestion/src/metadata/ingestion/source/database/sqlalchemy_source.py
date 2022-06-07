@@ -12,29 +12,42 @@
 Generic source to build database connectors.
 """
 import traceback
-import uuid
 from abc import ABC, abstractmethod
-from typing import Iterable, List, Optional, Tuple, Union
-
-from sqlalchemy.engine.reflection import Inspector
+from dataclasses import dataclass, field
+from typing import Iterable, List, Optional, Set, Tuple, Union
 
 from metadata.generated.schema.entity.data.database import Database
+from sqlalchemy.engine.reflection import Inspector
+
+from metadata.generated.schema.api.data.createDatabase import CreateDatabaseRequest
+from metadata.generated.schema.api.data.createDatabaseSchema import (
+    CreateDatabaseSchemaRequest,
+)
+from metadata.generated.schema.api.data.createTable import CreateTableRequest
 from metadata.generated.schema.entity.data.databaseSchema import DatabaseSchema
 from metadata.generated.schema.entity.data.table import (
     Column,
     DataModel,
     Table,
     TableData,
-    TableProfile,
+)
+from metadata.generated.schema.entity.services.databaseService import (
+    DatabaseConnection,
+    DatabaseService,
+)
+from metadata.generated.schema.metadataIngestion.databaseServiceMetadataPipeline import (
+    DatabaseServiceMetadataPipeline,
+)
+from metadata.generated.schema.metadataIngestion.workflow import (
+    Source as WorkflowSource,
 )
 from metadata.generated.schema.type.entityReference import EntityReference
 from metadata.ingestion.api.common import Entity
-from metadata.ingestion.api.source import Source
+from metadata.ingestion.api.source import Source, SourceStatus
 from metadata.ingestion.models.ometa_table_db import OMetaDatabaseAndTable
 from metadata.ingestion.models.ometa_tag_category import OMetaTagAndCategory
 from metadata.ingestion.models.table_metadata import DeleteTable
-from metadata.orm_profiler.orm.converter import ometa_to_orm
-from metadata.orm_profiler.profiler.default import DefaultProfiler
+from metadata.ingestion.ometa.ometa_api import OpenMetadata
 from metadata.utils import fqn
 from metadata.utils.filters import filter_by_schema, filter_by_table
 from metadata.utils.logger import ingestion_logger
@@ -42,11 +55,42 @@ from metadata.utils.logger import ingestion_logger
 logger = ingestion_logger()
 
 
+@dataclass
+class SQLSourceStatus(SourceStatus):
+    """
+    Reports the source status after ingestion
+    """
+
+    success: List[str] = field(default_factory=list)
+    failures: List[str] = field(default_factory=list)
+    warnings: List[str] = field(default_factory=list)
+    filtered: List[str] = field(default_factory=list)
+
+    def scanned(self, record: str) -> None:
+        self.success.append(record)
+        logger.info(f"Table Scanned: {record}")
+
+    def filter(self, record: str, err: str) -> None:
+        self.filtered.append(record)
+        logger.warning(f"Filtered Table {record} due to {err}")
+
+
 class SqlAlchemySource(Source, ABC):
+
+    source_config: DatabaseServiceMetadataPipeline
+    status: SQLSourceStatus
+    config: WorkflowSource
+    service: DatabaseService
+    metadata: OpenMetadata
+    database_source_state: Set
+    # Big union of types we want to fetch dynamically
+    service_connection: DatabaseConnection.__fields__["config"].type_
+
     @abstractmethod
-    def get_databases(self) -> Iterable[Inspector]:
+    def get_database_request_and_inspector(self) -> Iterable[Tuple[CreateDatabaseRequest, Inspector]]:
         """
-        Method Yields Inspector objects for each available database
+        Method Yields Inspector objects for each available database.
+        It will also prepare the CreateDatabaseRequest object to yield
         """
 
     @abstractmethod
@@ -65,33 +109,27 @@ class SqlAlchemySource(Source, ABC):
 
     @abstractmethod
     def get_table_description(
-        self, schema: str, table_name: str, table_type: str, inspector: Inspector
+        self, schema_name: str, table_name: str, inspector: Inspector
     ) -> str:
         """
         Method returns the table level comment
         """
 
     @abstractmethod
-    def is_partition(self, table_name: str, schema: str, inspector: Inspector) -> bool:
+    def is_partition(self, table_name: str, schema_name: str, inspector: Inspector) -> bool:
         """
         Method to check if the table is partitioned table
         """
 
     @abstractmethod
-    def get_data_model(self, database: str, schema: str, table_name: str) -> DataModel:
+    def get_data_model(self, database_name: str, schema_name: str, table_name: str) -> DataModel:
         """
         Method to fetch data models
         """
 
     @abstractmethod
-    def fetch_sample_data(self, schema: str, table_name: str) -> Optional[TableData]:
-        """
-        Method to fetch sample data form table
-        """
-
-    @abstractmethod
     def get_table_names(
-        self, schema: str, inspector: Inspector
+        self, schema_name: str, inspector: Inspector
     ) -> Optional[Iterable[Tuple[str, str]]]:
         """
         Method to fetch table & view names
@@ -99,7 +137,7 @@ class SqlAlchemySource(Source, ABC):
 
     @abstractmethod
     def get_columns(
-        self, schema: str, table_name: str, inspector: Inspector
+        self, schema_name: str, table_name: str, inspector: Inspector
     ) -> Optional[List[Column]]:
         """
         Method to fetch table columns data
@@ -107,7 +145,7 @@ class SqlAlchemySource(Source, ABC):
 
     @abstractmethod
     def get_view_definition(
-        self, table_type, table_name: str, schema: str, inspector: Inspector
+        self, table_type, table_name: str, schema_name: str, inspector: Inspector
     ) -> Optional[str]:
         """
         Method to fetch view definition
@@ -121,35 +159,35 @@ class SqlAlchemySource(Source, ABC):
 
     @abstractmethod
     def fetch_table_tags(
-        self, table_name: str, schema: str, inspector: Inspector
+        self, table_name: str, schema_name: str, inspector: Inspector
     ) -> None:
         """
         Method to fetch tags associated with table
         """
 
-    def _get_database_name(self) -> str:
-        if hasattr(self.service_connection, "database"):
-            return self.service_connection.database or "default"
-        return "default"
+    def get_database(self, database_name) -> Database:
+        """
+        GET the database from OMeta API
+        :param database_name: name, to build the FQN
+        :return: Database Entity
+        """
 
-    def get_database_entity(self) -> Database:
-        """
-        Method to get database entity from db name
-        """
-        return Database(
-            name=self._get_database_name(),
-            service=EntityReference(
-                id=self.service.id, type=self.service_connection.type.value
-            ),
+        database_fqn = fqn.build(
+            self.metadata,
+            entity_type=Database,
+            service_name=self.service.name.__root__,
+            database_name=database_name,
         )
 
-    def get_schema_entity(self, schema: str, database: Database) -> DatabaseSchema:
+        return self.metadata.get_by_name(entity=Database, fqn=database_fqn)
+
+    def get_schema_request(self, schema_name: str, database_request: CreateDatabaseRequest) -> CreateDatabaseSchemaRequest:
         """
         Method to get DatabaseSchema entity from schema name and database entity
         """
-        return DatabaseSchema(
-            name=schema,
-            database=database.service,
+        return CreateDatabaseSchemaRequest(
+            name=schema_name,
+            database=database_request.service,  # TODO THIS IS NOT CORRECT, SHOULD BE THE DB ID
             service=EntityReference(
                 id=self.service.id, type=self.service_connection.type.value
             ),
@@ -159,19 +197,27 @@ class SqlAlchemySource(Source, ABC):
         """
         Method to fetch all tables, views & mark delete tables
         """
-        for inspector in self.get_databases():
-            for schema in self.get_schemas(inspector):
+        for database_request, inspector in self.get_database_request_and_inspector():
+
+            yield database_request  # Will be created by the sink
+            database_entity = self.get_database(database_name=database_request.name.__root__)
+
+            for schema_name in self.get_schemas(inspector):
+
+                yield schema_request
+                use schema_entity
+
                 try:
                     # clear any previous source database state
                     self.database_source_state.clear()
                     if filter_by_schema(
-                        self.source_config.schemaFilterPattern, schema_name=schema
+                        self.source_config.schemaFilterPattern, schema_name=schema_name
                     ):
-                        self.status.filter(schema, "Schema pattern not allowed")
+                        self.status.filter(schema_name, "Schema pattern not allowed")
                         continue
 
                     if self.source_config.includeTables:
-                        yield from self.fetch_tables(inspector, schema)
+                        yield from self.fetch_tables(inspector, schema_name)
 
                     if self.source_config.markDeletedTables:
                         schema_fqn = fqn.build(
@@ -179,7 +225,7 @@ class SqlAlchemySource(Source, ABC):
                             entity_type=DatabaseSchema,
                             service_name=self.config.serviceName,
                             database_name=self._get_database_name(),
-                            schema_name=schema,
+                            schema_name=schema_name,
                         )
                         yield from self.delete_tables(schema_fqn)
 
@@ -187,57 +233,42 @@ class SqlAlchemySource(Source, ABC):
                     logger.debug(traceback.format_exc())
                     logger.error(err)
 
-    def _get_table_entity(
-        self, schema: str, table_name: str, table_type: str, inspector: Inspector
-    ) -> Table:
+    def _get_table_request(
+        self, schema_request: CreateDatabaseSchemaRequest, table_name: str, table_type: str, inspector: Inspector
+    ) -> CreateTableRequest:
         """
         Method to get table entity
         """
-        description = self.get_table_description(schema, table_name, inspector)
+        description = self.get_table_description(schema_request.name.__root__, table_name, inspector)
         self.table_constraints = None
-        table_columns = self.get_columns(schema, table_name, inspector)
-        table_entity = Table(
-            id=uuid.uuid4(),
+        table_columns = self.get_columns(schema_request.name.__root__, table_name, inspector)
+        # TODO MISSING SCHEMA -> we need the ID?? how??
+        table_request = CreateTableRequest(
             name=table_name,
             tableType=table_type,
             description=description,
             columns=table_columns,
             viewDefinition=self.get_view_definition(
-                table_type, table_name, schema, inspector
+                table_type, table_name, schema_request, inspector
             ),
+            databaseSchema=...
         )
         if self.table_constraints:
-            table_entity.tableConstraints = self.table_constraints
-        try:
-            if self.source_config.generateSampleData:
-                table_data = self.fetch_sample_data(schema, table_name)
-                if table_data:
-                    table_entity.sampleData = table_data
-        # Catch any errors during the ingestion and continue
-        except Exception as err:  # pylint: disable=broad-except
-            logger.error(repr(err))
-            logger.error(err)
+            table_request.tableConstraints = self.table_constraints
 
-        try:
-            if self.source_config.enableDataProfiler:
-                profile = self.run_profiler(table=table_entity, schema=schema)
-                table_entity.tableProfile = [profile] if profile else None
-        # Catch any errors during the profile runner and continue
-        except Exception as err:
-            logger.error(err)
-        return table_entity
+        return table_request
 
     def fetch_tables(
-        self, inspector: Inspector, schema: str
+        self, inspector: Inspector, schema_name: str
     ) -> Iterable[Union[OMetaDatabaseAndTable, OMetaTagAndCategory]]:
         """
         Scrape an SQL schema and prepare Database and Table
         OpenMetadata Entities
         """
-        for table_name, table_type in self.get_table_names(schema, inspector):
+        for table_name, table_type in self.get_table_names(schema_name, inspector):
             try:
-                schema, table_name = self.standardize_schema_table_names(
-                    schema, table_name
+                schema_name, table_name = self.standardize_schema_table_names(
+                    schema_name, table_name
                 )
                 if filter_by_table(
                     self.source_config.tableFilterPattern, table_name=table_name
@@ -247,66 +278,41 @@ class SqlAlchemySource(Source, ABC):
                         "Table pattern not allowed",
                     )
                     continue
-                if self.is_partition(table_name, schema, inspector):
+                if self.is_partition(table_name, schema_name, inspector):
                     self.status.filter(
                         f"{self.config.serviceName}.{table_name}",
                         "Table is partition",
                     )
                     continue
 
-                table_entity = self._get_table_entity(
-                    schema, table_name, table_type, inspector
+
+                schema_request = self.get_schema_request(schema_name=schema_name, database_request=database_request)
+
+                table_request = self._get_table_request(
+                    schema_request, table_name, table_type, inspector
                 )
 
-                database = self.get_database_entity()
                 # check if we have any model to associate with
-                table_entity.dataModel = self.get_data_model(
-                    database.name.__root__, schema, table_name
+                data_model = self.get_data_model(
+                    database_request.name.__root__, schema_name, table_name
                 )
 
                 table_schema_and_db = OMetaDatabaseAndTable(
-                    table=table_entity,
-                    database=database,
-                    database_schema=self.get_schema_entity(schema, database),
+                    table_request=table_request,
+                    database_request=database_request,
+                    schema_request=self.get_schema_request(schema_name, database_request),
+                    data_model=data_model,
                 )
                 self.register_record(table_schema_and_db)
+
                 yield table_schema_and_db
+
             except Exception as err:
                 logger.debug(traceback.format_exc())
                 logger.error(err)
                 self.status.failures.append(
                     "{}.{}".format(self.config.serviceName, table_name)
                 )
-
-    def run_profiler(self, table: Table, schema: str) -> Optional[TableProfile]:
-        """
-        Convert the table to an ORM object and run the ORM
-        profiler.
-
-        :param table: Table Entity to be ingested
-        :param schema: Table schema
-        :return: TableProfile
-        """
-        try:
-            orm = ometa_to_orm(table=table, schema=schema)
-            profiler = DefaultProfiler(
-                session=self.session, table=orm, profile_date=self.profile_date
-            )
-            profiler.execute()
-            return profiler.get_profile()
-
-        # Catch any errors during profiling init and continue ingestion
-        except ModuleNotFoundError as err:
-            logger.error(
-                f"Profiling not available for this databaseService: {str(err)}"
-            )
-            self.source_config.enableDataProfiler = False
-
-        except Exception as exc:  # pylint: disable=broad-except
-            logger.debug(traceback.format_exc())
-            logger.debug(f"Error running ingestion profiler {repr(exc)}")
-
-        return None
 
     def register_record(self, table_schema_and_db: OMetaDatabaseAndTable) -> None:
         """
@@ -316,32 +322,22 @@ class SqlAlchemySource(Source, ABC):
             self.metadata,
             entity_type=Table,
             service_name=self.config.serviceName,
-            database_name=str(table_schema_and_db.database.name.__root__),
-            schema_name=str(table_schema_and_db.database_schema.name.__root__),
-            table_name=str(table_schema_and_db.table.name.__root__),
+            database_name=str(table_schema_and_db.database_request.name.__root__),
+            schema_name=str(table_schema_and_db.schema_request.name.__root__),
+            table_name=str(table_schema_and_db.table_request.name.__root__),
         )
 
         self.database_source_state.add(table_fqn)
         self.status.scanned(table_fqn)
 
-    def _build_database_state(self, schema_fqn: str) -> List[EntityReference]:
-        after = None
-        tables = []
-        while True:
-            table_entities = self.metadata.list_entities(
-                entity=Table, after=after, limit=100, params={"database": schema_fqn}
-            )
-            tables.extend(table_entities.entities)
-            if table_entities.after is None:
-                break
-            after = table_entities.after
-        return tables
-
     def delete_tables(self, schema_fqn: str) -> DeleteTable:
         """
         Returns Deleted tables
         """
-        database_state = self._build_database_state(schema_fqn)
+        # Fetch all tables known by OM in that schema
+        database_state = self.metadata.list_all_entities(entity=Table, params={"database": schema_fqn})
+
+        # If a table is not being ingested anymore, flag as deleted
         for table in database_state:
             if str(table.fullyQualifiedName.__root__) not in self.database_source_state:
                 yield DeleteTable(table=table)

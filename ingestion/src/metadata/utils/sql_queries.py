@@ -467,10 +467,11 @@ POSTGRES_SQL_STATEMENT = textwrap.dedent(
     """
 )
 
+# Ingesting Foreign Tables by passing `relkind` as `f`.
 POSTGRES_GET_TABLE_NAMES = """
     SELECT c.relname FROM pg_class c
     JOIN pg_namespace n ON n.oid = c.relnamespace
-    WHERE n.nspname = :schema AND c.relkind in ('r', 'p') AND relispartition = false
+    WHERE n.nspname = :schema AND c.relkind in ('r', 'p', 'f') AND relispartition = false
 """
 
 POSTGRES_PARTITION_DETAILS = textwrap.dedent(

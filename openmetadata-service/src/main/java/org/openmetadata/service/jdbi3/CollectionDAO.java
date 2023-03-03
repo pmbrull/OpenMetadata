@@ -89,6 +89,7 @@ import org.openmetadata.schema.entity.services.ingestionPipelines.IngestionPipel
 import org.openmetadata.schema.entity.teams.Role;
 import org.openmetadata.schema.entity.teams.Team;
 import org.openmetadata.schema.entity.teams.User;
+import org.openmetadata.schema.entity.operations.Workflow;
 import org.openmetadata.schema.settings.Settings;
 import org.openmetadata.schema.settings.SettingsType;
 import org.openmetadata.schema.tests.TestCase;
@@ -265,6 +266,9 @@ public interface CollectionDAO {
 
   @CreateSqlObject
   KpiDAO kpiDAO();
+
+  @CreateSqlObject
+  WorkflowDAO workflowDAO();
 
   interface DashboardDAO extends EntityDAO<Dashboard> {
     @Override
@@ -3414,6 +3418,23 @@ public interface CollectionDAO {
     @Override
     default Class<Kpi> getEntityClass() {
       return Kpi.class;
+    }
+
+    @Override
+    default String getNameColumn() {
+      return "name";
+    }
+  }
+
+  interface WorkflowDAO extends EntityDAO<Workflow> {
+    @Override
+    default String getTableName() {
+      return "operations_workflow";
+    }
+
+    @Override
+    default Class<Workflow> getEntityClass() {
+      return Workflow.class;
     }
 
     @Override

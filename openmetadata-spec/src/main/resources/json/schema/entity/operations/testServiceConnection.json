@@ -1,5 +1,5 @@
 {
-  "$id": "https://open-metadata.org/schema/api/services/ingestionPipelines/testServiceConnection.json",
+  "$id": "https://open-metadata.org/schema/entity/operations/workflow/testServiceConnection.json",
   "$schema": "http://json-schema.org/draft-07/schema#",
   "title": "TestServiceConnectionRequest",
   "description": "Test Service Connection to test user provided configuration is valid or not.",
@@ -9,22 +9,22 @@
       "description": "Connection object.",
       "oneOf": [
         {
-          "$ref": "../../../entity/services/databaseService.json#/definitions/databaseConnection"
+          "$ref": "../services/databaseService.json#/definitions/databaseConnection"
         },
         {
-          "$ref": "../../../entity/services/dashboardService.json#/definitions/dashboardConnection"
+          "$ref": "../services/dashboardService.json#/definitions/dashboardConnection"
         },
         {
-          "$ref": "../../../entity/services/messagingService.json#/definitions/messagingConnection"
+          "$ref": "../services/messagingService.json#/definitions/messagingConnection"
         },
         {
-          "$ref": "../../../entity/services/pipelineService.json#/definitions/pipelineConnection"
+          "$ref": "../services/pipelineService.json#/definitions/pipelineConnection"
         },
         {
-          "$ref": "../../../entity/services/mlmodelService.json#/definitions/mlModelConnection"
+          "$ref": "../services/mlmodelService.json#/definitions/mlModelConnection"
         },
         {
-          "$ref": "../../../entity/services/metadataService.json#/definitions/metadataConnection"
+          "$ref": "../services/metadataService.json#/definitions/metadataConnection"
         }
       ]
     },
@@ -54,7 +54,7 @@
       ]
     },
     "secretsManagerProvider": {
-      "$ref": "../../../security/secrets/secretsManagerProvider.json",
+      "$ref": "../../security/secrets/secretsManagerProvider.json",
       "default": "noop"
     }
   },

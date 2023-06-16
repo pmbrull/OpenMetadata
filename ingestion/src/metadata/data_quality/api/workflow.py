@@ -63,7 +63,7 @@ from metadata.utils.class_helper import (
 )
 from metadata.utils.importer import get_sink
 from metadata.utils.logger import test_suite_logger
-from metadata.utils.workflow_output_handler import print_test_suite_status
+from metadata.workflow.workflow_output_handler import print_test_suite_status
 from metadata.workflow.workflow_status_mixin import WorkflowStatusMixin
 
 logger: Logger = test_suite_logger()

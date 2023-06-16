@@ -106,7 +106,7 @@ def calculate_execution_time(func):
         func(*args, **kwargs)
         end = perf_counter()
         logger.debug(
-            f"{func.__name__} executed in { pretty_print_time_duration(end - start)}"
+            f"{func.__name__} executed in {pretty_print_time_duration(end - start)}"
         )
 
     return calculate_debug_time

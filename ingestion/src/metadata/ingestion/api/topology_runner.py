@@ -122,7 +122,7 @@ class TopologyRunnerMixin(Generic[C]):
         for entity_request in node_post_process():
             yield entity_request
 
-    def next_record(self) -> Iterable[Entity]:
+    def _run(self) -> Iterable[Entity]:
         """
         Based on a ServiceTopology, find the root node
         and fetch all source methods in the required order
@@ -203,6 +203,7 @@ class TopologyRunnerMixin(Generic[C]):
                         fields=["*"],  # Get all the available data from the Entity
                     )
                 # if entity does not exist in OM, or we want to overwrite, we will yield the entity_request
+                # which will get picked up by the Sink
                 if entity is None:
                     tries = 3
                     while not entity and tries > 0:

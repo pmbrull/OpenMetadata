@@ -35,7 +35,8 @@ from metadata.generated.schema.entity.services.connections.metadata.openMetadata
 from metadata.generated.schema.entity.teams.role import Role
 from metadata.generated.schema.entity.teams.team import Team
 from metadata.ingestion.api.common import Entity
-from metadata.ingestion.api.sink import Sink
+from metadata.ingestion.api.status import StackTraceError, Either
+from metadata.ingestion.api.steps import Sink
 from metadata.ingestion.models.delete_entity import DeleteEntity
 from metadata.ingestion.models.ometa_classification import OMetaTagAndClassification
 from metadata.ingestion.models.ometa_topic_data import OMetaTopicSampleData
@@ -66,7 +67,7 @@ class MetadataRestSinkConfig(ConfigModel):
     api_endpoint: Optional[str] = None
 
 
-class MetadataRestSink(Sink[Entity]):
+class MetadataRestSink(Sink):
     """
     Sink implementation that sends OM Entities
     to the OM server API
@@ -90,27 +91,27 @@ class MetadataRestSink(Sink[Entity]):
         self.team_entities = {}
 
         # Prepare write record dispatching
-        self.write_record = singledispatch(self.write_record)
-        self.write_record.register(AddLineageRequest, self.write_lineage)
-        self.write_record.register(OMetaUserProfile, self.write_users)
-        self.write_record.register(OMetaTagAndClassification, self.write_classification)
-        self.write_record.register(DeleteEntity, self.delete_entity)
-        self.write_record.register(OMetaPipelineStatus, self.write_pipeline_status)
-        self.write_record.register(DataModelLink, self.write_datamodel)
-        self.write_record.register(DashboardUsage, self.write_dashboard_usage)
-        self.write_record.register(OMetaTableConstraints, self.write_table_constraints)
-        self.write_record.register(
+        self._run = singledispatch(self._run)
+        self._run.register(AddLineageRequest, self.write_lineage)
+        self._run.register(OMetaUserProfile, self.write_users)
+        self._run.register(OMetaTagAndClassification, self.write_classification)
+        self._run.register(DeleteEntity, self.delete_entity)
+        self._run.register(OMetaPipelineStatus, self.write_pipeline_status)
+        self._run.register(DataModelLink, self.write_datamodel)
+        self._run.register(DashboardUsage, self.write_dashboard_usage)
+        self._run.register(OMetaTableConstraints, self.write_table_constraints)
+        self._run.register(
             OMetaTableProfileSampleData, self.write_profile_sample_data
         )
-        self.write_record.register(OMetaTestSuiteSample, self.write_test_suite_sample)
-        self.write_record.register(OMetaTestCaseSample, self.write_test_case_sample)
-        self.write_record.register(
+        self._run.register(OMetaTestSuiteSample, self.write_test_suite_sample)
+        self._run.register(OMetaTestCaseSample, self.write_test_case_sample)
+        self._run.register(
             OMetaLogicalTestSuiteSample, self.write_logical_test_suite_sample
         )
-        self.write_record.register(
+        self._run.register(
             OMetaTestCaseResultsSample, self.write_test_case_results_sample
         )
-        self.write_record.register(OMetaTopicSampleData, self.write_topic_sample_data)
+        self._run.register(OMetaTopicSampleData, self.write_topic_sample_data)
 
     @classmethod
     def create(cls, config_dict: dict, metadata_config: OpenMetadataConnection):
@@ -118,7 +119,7 @@ class MetadataRestSink(Sink[Entity]):
         return cls(config, metadata_config)
 
     @calculate_execution_time
-    def write_record(self, record: Entity) -> None:
+    def _run(self, record: Entity) -> None:
         """
         Default implementation for the single dispatch
         """
@@ -126,7 +127,7 @@ class MetadataRestSink(Sink[Entity]):
         logger.debug(f"Processing Create request {type(record)}")
         self.write_create_request(record)
 
-    def write_create_request(self, entity_request) -> None:
+    def write_create_request(self, entity_request) -> Either:
         """
         Send to OM the request creation received as is.
         :param entity_request: Create Entity request
@@ -135,24 +136,25 @@ class MetadataRestSink(Sink[Entity]):
         try:
             created = self.metadata.create_or_update(entity_request)
             if created:
-                self.status.records_written(
+                self.status.scanned(
                     f"{type(created).__name__}: {created.fullyQualifiedName.__root__}"
                 )
                 logger.debug(f"Successfully ingested {log}")
+                return None
             else:
                 error = f"Failed to ingest {log}"
                 logger.error(error)
-                self.status.failed(log, error, None)
+                return StackTraceError(name=log, error=error, stack_trace=None)
         except (APIError, HTTPError) as err:
             error = f"Failed to ingest {log} due to api request failure: {err}"
             logger.debug(traceback.format_exc())
             logger.warning(error)
-            self.status.failed(log, error, traceback.format_exc())
+            return StackTraceError(name=log, error=error, stack_trace=traceback.format_exc())
         except Exception as exc:
             error = f"Failed to ingest {log}: {exc}"
             logger.debug(traceback.format_exc())
             logger.warning(error)
-            self.status.failed(log, error, traceback.format_exc())
+            return StackTraceError(name=log, error=error, stack_trace=traceback.format_exc())
 
     def write_datamodel(self, datamodel_link: DataModelLink) -> None:
         """
@@ -169,7 +171,7 @@ class MetadataRestSink(Sink[Entity]):
             logger.debug(
                 f"Successfully ingested DataModel for {table.fullyQualifiedName.__root__}"
             )
-            self.status.records_written(
+            self.status.scanned(
                 f"DataModel: {table.fullyQualifiedName.__root__}"
             )
         else:
@@ -204,7 +206,7 @@ class MetadataRestSink(Sink[Entity]):
         """
         try:
             self.metadata.create_or_update(record.classification_request)
-            self.status.records_written(
+            self.status.scanned(
                 f"Classification: {record.classification_request.name.__root__}"
             )
         except Exception as exc:
@@ -214,7 +216,7 @@ class MetadataRestSink(Sink[Entity]):
             )
         try:
             self.metadata.create_or_update(record.tag_request)
-            self.status.records_written(f"Tag: {record.tag_request.name.__root__}")
+            self.status.scanned(f"Tag: {record.tag_request.name.__root__}")
         except Exception as exc:
             logger.debug(traceback.format_exc())
             logger.warning(
@@ -226,20 +228,20 @@ class MetadataRestSink(Sink[Entity]):
             created_lineage = self.metadata.add_lineage(add_lineage)
             created_lineage_info = created_lineage["entity"]["fullyQualifiedName"]
             logger.debug(f"Successfully added Lineage from {created_lineage_info}")
-            self.status.records_written(f"Lineage from: {created_lineage_info}")
+            self.status.scanned(f"Lineage from: {created_lineage_info}")
         except (APIError, ValidationError) as err:
             error = f"Failed to ingest lineage [{add_lineage}]: {err}"
             logger.debug(traceback.format_exc())
             logger.error(error)
             self.status.failed(
-                get_add_lineage_log_str(add_lineage), error, traceback.format_exc()
+                StackTraceError(name=get_add_lineage_log_str(add_lineage), error=error, stack_trace=traceback.format_exc())
             )
         except (KeyError, ValueError) as err:
             error = f"Failed to extract lineage information for [{add_lineage}] after sink: {err}"
             logger.debug(traceback.format_exc())
             logger.warning(error)
             self.status.failed(
-                get_add_lineage_log_str(add_lineage), error, traceback.format_exc()
+                StackTraceError(name=get_add_lineage_log_str(add_lineage), error=error, stack_trace=traceback.format_exc())
             )
 
     def _create_role(self, create_role: CreateRoleRequest) -> Optional[Role]:
@@ -315,12 +317,12 @@ class MetadataRestSink(Sink[Entity]):
         user_profile = record.user.dict(exclude_unset=True)
         user_profile["roles"] = role_ids
         user_profile["teams"] = team_ids
-        metadata_user = CreateUserRequest(**user_profile)
+        metadata_user = CreateUserRequest.parse_obj(user_profile)
 
         # Create user
         try:
             user = self.metadata.create_or_update(metadata_user)
-            self.status.records_written(user.displayName)
+            self.status.scanned(user.displayName)
             logger.debug(f"User: {user.displayName}")
         except Exception as exc:
             logger.debug(traceback.format_exc())
@@ -351,7 +353,7 @@ class MetadataRestSink(Sink[Entity]):
             self.metadata.add_pipeline_status(
                 fqn=record.pipeline_fqn, status=record.pipeline_status
             )
-            self.status.records_written(f"Pipeline Status: {record.pipeline_fqn}")
+            self.status.scanned(f"Pipeline Status: {record.pipeline_fqn}")
 
         except Exception as exc:
             logger.debug(traceback.format_exc())
@@ -369,7 +371,7 @@ class MetadataRestSink(Sink[Entity]):
             logger.debug(
                 f"Successfully ingested profile for table {record.table.name.__root__}"
             )
-            self.status.records_written(f"Profile: {record.table.name.__root__}")
+            self.status.scanned(f"Profile: {record.table.name.__root__}")
         except Exception as exc:
             logger.debug(traceback.format_exc())
             logger.error(
@@ -385,7 +387,7 @@ class MetadataRestSink(Sink[Entity]):
             logger.debug(
                 f"Successfully created test Suite {record.test_suite.name.__root__}"
             )
-            self.status.records_written(f"testSuite: {record.test_suite.name.__root__}")
+            self.status.scanned(f"testSuite: {record.test_suite.name.__root__}")
         except Exception as exc:
             logger.debug(traceback.format_exc())
             logger.error(
@@ -399,7 +401,7 @@ class MetadataRestSink(Sink[Entity]):
             logger.debug(
                 f"Successfully created logical test Suite {record.test_suite.name.__root__}"
             )
-            self.status.records_written(f"testSuite: {record.test_suite.name.__root__}")
+            self.status.scanned(f"testSuite: {record.test_suite.name.__root__}")
             self.metadata.add_logical_test_cases(
                 CreateLogicalTestCases(
                     testSuiteId=test_suite.id,
@@ -421,7 +423,7 @@ class MetadataRestSink(Sink[Entity]):
             logger.debug(
                 f"Successfully created test case {record.test_case.name.__root__}"
             )
-            self.status.records_written(f"testCase: {record.test_case.name.__root__}")
+            self.status.scanned(f"testCase: {record.test_case.name.__root__}")
         except Exception as exc:
             logger.debug(traceback.format_exc())
             logger.error(f"Unexpected error writing test case sample [{record}]: {exc}")
@@ -438,7 +440,7 @@ class MetadataRestSink(Sink[Entity]):
             logger.debug(
                 f"Successfully ingested test case results for test case {record.test_case_name}"
             )
-            self.status.records_written(
+            self.status.scanned(
                 f"testCaseResults: {record.test_case_name} - {record.test_case_results.timestamp.__root__}"
             )
         except Exception as exc:
@@ -460,7 +462,7 @@ class MetadataRestSink(Sink[Entity]):
                 logger.debug(
                     f"Successfully ingested sample data for {record.topic.name.__root__}"
                 )
-                self.status.records_written(
+                self.status.scanned(
                     f"topicSampleData: {record.topic.name.__root__}"
                 )
         except Exception as exc:
@@ -481,11 +483,12 @@ class MetadataRestSink(Sink[Entity]):
             logger.debug(
                 f"Successfully ingested table constraints for table id {record.table.id}"
             )
+            return None
         except Exception as exc:
             logger.debug(traceback.format_exc())
-            logger.error(
-                f"Unexpected error while ingesting table constraints for table id [{record.table.id}]: {exc}"
-            )
+            error = f"Unexpected error while ingesting table constraints for table id [{record.table.id}]: {exc}"
+            logger.error(error)
+            return StackTraceError(name=record.table.name.__root__, error=error, stack_trace=traceback.format_exc())
 
     def close(self):
         pass

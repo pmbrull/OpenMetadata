@@ -63,7 +63,7 @@ from metadata.utils.time_utils import (
     get_beginning_of_day_timestamp_mill,
     get_end_of_day_timestamp_mill,
 )
-from metadata.utils.workflow_output_handler import print_data_insight_status
+from metadata.workflow.workflow_output_handler import print_data_insight_status
 from metadata.workflow.workflow_status_mixin import WorkflowStatusMixin
 
 logger = data_insight_logger()

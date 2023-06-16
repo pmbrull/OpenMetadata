@@ -19,7 +19,7 @@ import traceback
 from metadata.config.common import load_config_file
 from metadata.data_insight.api.workflow import DataInsightWorkflow
 from metadata.utils.logger import cli_logger
-from metadata.utils.workflow_output_handler import WorkflowType, print_init_error
+from metadata.workflow.workflow_output_handler import WorkflowType, print_init_error
 
 logger = cli_logger()
 

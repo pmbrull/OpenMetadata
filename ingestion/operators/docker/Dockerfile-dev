@@ -76,8 +76,8 @@ COPY ingestion/operators/docker/*.py .
 RUN pip install --upgrade pip
 
 ARG INGESTION_DEPENDENCY="all"
-RUN pip install --upgrade ".[airflow]"
-RUN pip install --upgrade ".[${INGESTION_DEPENDENCY}]"
+RUN pip install ".[airflow]"
+RUN pip install ".[${INGESTION_DEPENDENCY}]"
 
 # Temporary workaround for https://github.com/open-metadata/OpenMetadata/issues/9593
 ARG TARGETPLATFORM

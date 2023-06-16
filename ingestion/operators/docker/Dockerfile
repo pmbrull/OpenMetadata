@@ -1,5 +1,8 @@
 FROM python:3.9-buster
 
+RUN curl https://packages.microsoft.com/keys/microsoft.asc | apt-key add -
+RUN curl https://packages.microsoft.com/config/debian/11/prod.list > /etc/apt/sources.list.d/mssql-release.list
+
 # Install Dependencies (listed in alphabetical order)
 RUN apt-get update \
     && apt-get install -y alien \
@@ -13,7 +16,6 @@ RUN apt-get update \
     libaio1 \
     libevent-dev \
     libffi-dev \
-    libpq-dev \
     libsasl2-dev \
     libsasl2-2 \
     libsasl2-modules \
@@ -30,6 +32,14 @@ RUN apt-get update \
     unixodbc-dev \
     unzip \
     wget --no-install-recommends
+
+# Add updated postgres/redshift dependencies based on libq
+RUN curl https://www.postgresql.org/media/keys/ACCC4CF8.asc | apt-key add -
+RUN echo "deb https://apt.postgresql.org/pub/repos/apt/ buster-pgdg main" > /etc/apt/sources.list.d/pgdg.list; \
+    apt-get update; \
+    apt-get install --no-install-recommends -y libpq-dev postgresql-client postgresql-common postgresql postgresql-contrib; \
+    apt-get autoremove -yqq --purge; \
+    apt-get clean && rm -rf /var/lib/apt/lists/*
 
 # Prep to install msodbcsql18
 RUN apt-get update && \
@@ -66,13 +76,18 @@ COPY ingestion/operators/docker/*.py .
 RUN pip install --upgrade pip
 
 ARG INGESTION_DEPENDENCY="all"
-RUN pip install --upgrade "openmetadata-ingestion[airflow]==1.0.0.0.dev0"
-RUN pip install --upgrade "openmetadata-ingestion[${INGESTION_DEPENDENCY}]==1.0.0.0.dev0"
+RUN pip install --upgrade pip
+RUN pip install "openmetadata-ingestion[airflow]~=1.0.4"
+RUN pip install "openmetadata-ingestion[${INGESTION_DEPENDENCY}]~=1.0.4"
+RUN pip install memory_profiler
+RUN pip install redshift-connector==2.0.908
 
 # Temporary workaround for https://github.com/open-metadata/OpenMetadata/issues/9593
-ARG TARGETPLATFORM
-RUN echo "Image built for $TARGETPLATFORM" > /opt/airflow/platform.log
-RUN if [ "$TARGETPLATFORM" != "linux/arm64" ]; then pip install "ibm-db-sa~=0.4"; fi;
+RUN echo "Image built for $(uname -m)"
+RUN if [[ $(uname -m) == "arm64" || $(uname -m) == "aarch64" ]]; \
+ then \
+ pip install "ibm-db-sa~=0.4"; \
+ fi
 
 # Uninstalling psycopg2-binary and installing psycopg2 instead
 # because the psycopg2-binary generates a architecture specific error

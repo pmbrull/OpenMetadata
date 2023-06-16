@@ -65,7 +65,7 @@ from metadata.utils.class_helper import (
 from metadata.utils.filters import filter_by_database, filter_by_schema, filter_by_table
 from metadata.utils.importer import get_sink
 from metadata.utils.logger import profiler_logger
-from metadata.utils.workflow_output_handler import print_profiler_status
+from metadata.workflow.workflow_output_handler import print_profiler_status
 from metadata.workflow.workflow_status_mixin import WorkflowStatusMixin
 
 logger = profiler_logger()
@@ -344,7 +344,7 @@ class ProfilerWorkflow(WorkflowStatusMixin):
         return 0
 
     def _get_source_success(self):
-        """Compue the success rate of the source"""
+        """Compute the success rate of the source"""
         return self.source_status.calculate_success()
 
     def update_ingestion_status_at_end(self):

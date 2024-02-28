@@ -13,15 +13,21 @@ import lombok.extern.slf4j.Slf4j;
 import org.jdbi.v3.sqlobject.transaction.Transaction;
 import org.openmetadata.schema.api.configuration.SlackAppConfiguration;
 import org.openmetadata.schema.email.SmtpSettings;
+import org.openmetadata.schema.entity.services.ingestionPipelines.PipelineServiceClientResponse;
 import org.openmetadata.schema.settings.Settings;
 import org.openmetadata.schema.settings.SettingsType;
+import org.openmetadata.schema.system.StepValidation;
+import org.openmetadata.schema.system.Validation;
 import org.openmetadata.schema.util.EntitiesCount;
 import org.openmetadata.schema.util.ServicesCount;
+import org.openmetadata.sdk.PipelineServiceClient;
 import org.openmetadata.service.Entity;
+import org.openmetadata.service.OpenMetadataApplicationConfig;
 import org.openmetadata.service.exception.CustomExceptionMessage;
 import org.openmetadata.service.fernet.Fernet;
 import org.openmetadata.service.jdbi3.CollectionDAO.SystemDAO;
 import org.openmetadata.service.resources.settings.SettingsCache;
+import org.openmetadata.service.search.SearchRepository;
 import org.openmetadata.service.util.JsonUtils;
 import org.openmetadata.service.util.RestUtil;
 import org.openmetadata.service.util.ResultList;
@@ -32,6 +38,19 @@ public class SystemRepository {
   private static final String FAILED_TO_UPDATE_SETTINGS = "Failed to Update Settings";
   public static final String INTERNAL_SERVER_ERROR_WITH_REASON = "Internal Server Error. Reason :";
   private final SystemDAO dao;
+
+  private enum ValidationStepDescription {
+    DATABASE("Validate that we can properly run a query against the configured database."),
+    SEARCH("Validate that the search client is available."),
+    PIPELINE_SERVICE_CLIENT("Validate that the pipeline service client is available")
+    ;
+
+    public final String key;
+
+    ValidationStepDescription(String param) {
+      this.key = param;
+    }
+  }
 
   public SystemRepository() {
     this.dao = Entity.getCollectionDAO().systemDAO();
@@ -209,5 +228,46 @@ public class SystemRepository {
       encryptedSetting = Fernet.getInstance().decryptIfApplies(encryptedSetting);
     }
     return JsonUtils.readValue(encryptedSetting, SlackAppConfiguration.class);
+  }
+
+  public Validation validateSystem(OpenMetadataApplicationConfig applicationConfig, PipelineServiceClient pipelineServiceClient) {
+    Validation validation = new Validation();
+
+    try {
+      dao.testConnection();
+      validation.setDatabase(new StepValidation().withDescription(ValidationStepDescription.DATABASE.key).withPassed(Boolean.TRUE));
+    } catch (Exception exc) {
+      validation.setDatabase(new StepValidation()
+          .withDescription(ValidationStepDescription.DATABASE.key)
+          .withPassed(Boolean.FALSE)
+          .withMessage(exc.getMessage()));
+    }
+
+    SearchRepository searchRepository = Entity.getSearchRepository();
+    if (Boolean.TRUE.equals(searchRepository.getSearchClient().isClientAvailable())) {
+      validation.setSearchInstance(new StepValidation().withDescription(ValidationStepDescription.SEARCH.key).withPassed(Boolean.TRUE));
+    } else {
+      validation.setSearchInstance(
+          new StepValidation()
+              .withDescription(ValidationStepDescription.SEARCH.key)
+              .withPassed(Boolean.FALSE)
+              .withMessage("Search client is not available"));
+    }
+
+    PipelineServiceClientResponse pipelineResponse = pipelineServiceClient.getServiceStatus();
+    if (pipelineResponse.getCode() == 200) {
+      validation.setPipelineServiceClient(new StepValidation().withDescription(ValidationStepDescription.PIPELINE_SERVICE_CLIENT.key).withPassed(Boolean.TRUE));
+    } else {
+      validation.setPipelineServiceClient(
+          new StepValidation()
+              .withDescription(ValidationStepDescription.PIPELINE_SERVICE_CLIENT.key)
+              .withPassed(Boolean.FALSE)
+              .withMessage(pipelineResponse.getReason()));
+    }
+
+    // TODO: jwks
+
+
+    return validation;
   }
 }

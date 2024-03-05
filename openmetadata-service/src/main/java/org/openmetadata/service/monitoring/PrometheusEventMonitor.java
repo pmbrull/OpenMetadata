@@ -38,7 +38,7 @@ public class PrometheusEventMonitor extends EventMonitor {
       EventMonitorConfiguration config,
       String clusterPrefix) {
     super(eventMonitorProvider, config, clusterPrefix);
-    meterRegistry = MicrometerBundleSingleton.prometheusMeterRegistry;
+    meterRegistry = MicrometerBundleSingleton.getPrometheusMeterRegistry();
   }
 
   @Override

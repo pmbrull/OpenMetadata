@@ -39,7 +39,7 @@ public class PipelineServiceStatusJobHandler {
       PipelineServiceClientConfiguration config, String clusterName) throws SchedulerException {
     this.config = config;
     this.pipelineServiceClient = PipelineServiceClientFactory.createPipelineServiceClient(config);
-    this.meterRegistry = MicrometerBundleSingleton.prometheusMeterRegistry;
+    this.meterRegistry = MicrometerBundleSingleton.getPrometheusMeterRegistry();
     this.clusterName = clusterName;
     this.healthCheckInterval = config.getHealthCheckInterval();
     this.scheduler.start();

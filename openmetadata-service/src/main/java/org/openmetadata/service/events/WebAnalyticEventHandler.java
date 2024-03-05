@@ -17,7 +17,7 @@ public class WebAnalyticEventHandler implements EventHandler {
   private static final String COUNTER_NAME = "web.analytics.events";
 
   public void init(OpenMetadataApplicationConfig config) {
-    this.prometheusMeterRegistry = MicrometerBundleSingleton.prometheusMeterRegistry;
+    this.prometheusMeterRegistry = MicrometerBundleSingleton.createPrometheusMeterRegistry(config.getEventMonitorConfiguration());
     this.clusterName = config.getClusterName();
   }
 
@@ -41,7 +41,5 @@ public class WebAnalyticEventHandler implements EventHandler {
         .increment();
   }
 
-  public void close() {
-    prometheusMeterRegistry.close();
-  }
+  public void close() {}
 }

@@ -13,35 +13,42 @@
 
 package org.openmetadata.service.util;
 
-import static io.github.maksymdolgykh.dropwizard.micrometer.MicrometerBundle.prometheusRegistry;
-
 import io.github.maksymdolgykh.dropwizard.micrometer.MicrometerBundle;
 import io.micrometer.core.instrument.Timer;
+import io.micrometer.prometheus.PrometheusConfig;
 import io.micrometer.prometheus.PrometheusMeterRegistry;
+import lombok.Getter;
 import org.openmetadata.service.OpenMetadataApplicationConfig;
+import org.openmetadata.service.monitoring.EventMonitorConfiguration;
 
 public class MicrometerBundleSingleton {
-  private static final MicrometerBundle instance = new MicrometerBundle();
+
+  @Getter
+  private static MicrometerBundle micrometerBundle = new MicrometerBundle();
   // We'll use this registry to add monitoring around Ingestion Pipelines
-  public static final PrometheusMeterRegistry prometheusMeterRegistry = prometheusRegistry;
+  @Getter
+  private static PrometheusMeterRegistry prometheusMeterRegistry;
+  @Getter
   private static Timer webAnalyticEvents;
 
   private MicrometerBundleSingleton() {}
 
-  public static MicrometerBundle getInstance() {
-    return instance;
+  public static PrometheusMeterRegistry createPrometheusMeterRegistry(EventMonitorConfiguration config) {
+    if (prometheusMeterRegistry != null) {
+      return prometheusMeterRegistry;
+    }
+    // TODO: add a parameter to choose between default registry or internal
+    prometheusMeterRegistry = new PrometheusMeterRegistry(PrometheusConfig.DEFAULT);
+    return prometheusMeterRegistry;
   }
 
-  public static void setWebAnalyticsEvents(OpenMetadataApplicationConfig config) {
+  public static void initWebAnalyticsEvents(EventMonitorConfiguration config) {
+
     webAnalyticEvents =
         Timer.builder("latency_requests")
             .description("Request latency in seconds.")
-            .publishPercentiles(config.getEventMonitorConfiguration().getLatency())
+            .publishPercentiles(config.getLatency())
             .publishPercentileHistogram()
-            .register(prometheusMeterRegistry);
-  }
-
-  public static Timer getWebAnalyticEvents() {
-    return webAnalyticEvents;
+            .register(createPrometheusMeterRegistry(config));
   }
 }
